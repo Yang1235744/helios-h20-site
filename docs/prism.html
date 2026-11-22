@@ -132,7 +132,7 @@
     │<br>
     ▼<br>
 <span class="hl1">[EDCISampler]</span> &nbsp; Rectified Flow · 增强 DPM-Solver++ · cfg_scale=3.5<br>
-&nbsp;&nbsp;&nbsp;&nbsp;采样步数: 28步高质量<br>
+&nbsp;&nbsp;&nbsp;&nbsp;采样步数: 28步高质量；30秒视频通过 chunked sampling（每次64帧，分5次推理拼接）实现<br>
 &nbsp;&nbsp;&nbsp;&nbsp;目标: x₀ = xt - t·v_pred<br>
     │<br>
     ▼<br>
