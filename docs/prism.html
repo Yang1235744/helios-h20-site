@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>nanyang-Prism-Max-H2.0 — 从零自研架构</title>
-<meta name="description" content="nanyang-Prism-Max-H2.0：全部从零自研，零第三方模型/API依赖。独立训练 Self-DiT + 因果 3D VAE，支持高清图片与 30 秒稳定视频输出。">
+<meta name="description" content="nanyang-Prism-Max-H2.0：全部从零自研，零第三方模型/API依赖。独立训练 Self-DiT + SelfVAE（对称3D VAE），支持高清图片与 30 秒稳定视频输出。">
 <style>
   :root { --bg:#0b0e14; --panel:#121722; --line:#232b3a; --text:#e8edf5; --dim:#93a0b4; --accent:#52d273; --accent2:#4da3ff; --warn:#f0a030; --mono:"Cascadia Code","JetBrains Mono",Consolas,monospace; }
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -101,7 +101,7 @@
     <div class="badge">v2.0.0 · 全自研从零构建</div>
     <h1>nanyang-Prism-Max-H2.0</h1>
     <p>全部从零自研，零第三方模型权重、零外部 API。<br>
-    自研 Self-DiT + 因果 3D VAE，支持高清静态图片与 <strong>30 秒稳定视频</strong>输出，彻底解决花屏问题。</p>
+    自研 Self-DiT + SelfVAE（对称3D VAE），支持高清静态图片与 <strong>30 秒稳定视频</strong>输出，彻底解决花屏问题。</p>
     <a class="btn btn-primary" href="https://github.com/Yang1235744/nanyang-Prism-Max-H2.0">在 GitHub 上查看</a>
     <a class="btn btn-ghost" href="#architecture">看自研架构</a>
   </div>
@@ -109,13 +109,13 @@
   <div class="note-card">
     <h3>// 重要说明：H2.0 完全自研</h3>
     <p><span class="hl">旧版 H1.7 已废弃</span>——当时直接使用了 SDXL Turbo 和 AnimateDiff 开源模型权重，不算真正拥有自己的模型。</p>
-    <p><span class="hl">H2.0 从零自研</span>：所有网络结构（Self-DiT / 因果 3D VAE / ByteTextEncoder）均为手写字母级 PyTorch 代码，无任何第三方预训练权重下载链接。</p>
+    <p><span class="hl">H2.0 从零自研</span>：所有网络结构（Self-DiT / SelfVAE / ByteTextEncoder）均为手写字母级 PyTorch 代码，无任何第三方预训练权重下载链接。</p>
     <p>生成效果取决于你的训练数据量。目前提供完整训练管线，用自己的数据集训练即可获得专属生成的图像/视频模型。</p>
   </div>
 
   <section id="architecture">
     <h2>架构总览</h2>
-    <p class="sub">三件套协同工作：ByteTextEncoder 编码文本 → Self-DiT 在潜空间去噪 → 因果 3D VAE 解码还原画面。</p>
+    <p class="sub">三件套协同工作：ByteTextEncoder 编码文本 → Self-DiT 在潜空间去噪 → SelfVAE 解码还原画面。</p>
 
     <div class="arch-diag">
 <span class="hl1">【Prompt】</span> ──&gt; "雪地里的红狐"<br>
@@ -136,9 +136,10 @@
 &nbsp;&nbsp;&nbsp;&nbsp;目标: x₀ = xt - t·v_pred<br>
     │<br>
     ▼<br>
-<span class="hl1">[因果 3D VAE]</span> &nbsp; Encoder: CausalConv3d (只看过去帧)<br>
-&nbsp;&nbsp;&nbsp;&nbsp;Decoder: ConvTranspose3d (平滑过渡)<br>
-&nbsp;&nbsp;&nbsp;&nbsp;下采样 8× 空间 · 4 通道潜空间<br>
+<span class="hl1">[SelfVAE]</span> &nbsp; Encoder: AvgPool3d(1,2,2) 纯空间下采样<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Decoder: nn.Upsample(scale_factor=(1,2,2)) 精确恢复时序维度<br>
+&nbsp;&nbsp;&nbsp;&nbsp;关键设计：kernel[0]=stride[0]=1，时间维度 T 全程不变<br>
+&nbsp;&nbsp;&nbsp;&nbsp;下采样 8× 空间 · 4 通道潜空间 · temporal_reg 防花屏损失<br>
     │<br>
     ▼<br>
 <span class="hl1">[Output]</span> &nbsp; 图片 [3,1024,1024] 或 视频 [3,T,1024,1024] FPS×30s
@@ -150,10 +151,10 @@
     <p class="sub">旧版 H1.7 常见花屏问题及其成因对照：</p>
     <table>
       <tr><th>症状</th><th>H1.7 原因</th><th>H2.0 解法</th></tr>
-      <tr><td>视频开头/结尾闪烁</td><td>AnimateDiff 使用非因果 3D 卷积，未来帧信息泄露到当前帧</td><td>encoder 使用 <code>CausalConv3d</code>，仅处理已过去的帧</td></tr>
-      <tr><td>画面随机出现噪点块</td><td>VAE 解码器无时序约束，相邻帧之间不一致</td><td>decoder 使用 ConvTranspose3d 实现帧间平滑插值</td></tr>
-      <tr><td>长视频（&gt;10s）严重花屏</td><td>逐段生成再拼接，边界处产生跳变</td><td>单次端到端生成整个时间段，全程自回归一致性</td></tr>
-      <tr><td>单张图片模糊或有伪影</td><td>SDXL Turbo 步数太少（4步），细节丢失</td><td>Self-DiT 用 EDCI Sampler 28 步高质量推理</td></tr>
+      <tr><td>视频开头/结尾闪烁</td><td>AnimateDiff 使用非因果 3D 卷积，未来帧信息泄露到当前帧</td><td>encoder 使用 <code>AvgPool3d(kernel=(1,2,2))</code>，空间下采样不影响时序维度，帧间保持连续</td></tr>
+      <tr><td>画面随机出现噪点块</td><td>VAE 解码器无时序约束，相邻帧之间不一致</td><td>decoder 使用 <code>nn.Upsample(scale_factor=(1,2,2))</code> 精确恢复 T 维度，配合同步训练 temporal_reg 损失</td></tr>
+      <tr><td>长视频（&gt;10s）严重花屏</td><td>逐段生成再拼接，边界处产生跳变</td><td>单次端到端生成整个时间段，chunked sampling（每次64帧）全程自回归一致性</td></tr>
+      <tr><td>单张图片模糊或有伪影</td><td>SDXL Turbo 步数太少（4步），细节丢失</td><td>Self-DiT 用 EDCI Sampler 28 步高质量推理，NaN-safe clipping 防止初始化爆炸</td></tr>
     </table>
   </section>
 
@@ -237,7 +238,7 @@
   <section id="roadmap">
     <h2>迭代路线</h2>
     <ol class="roadmap">
-      <li class="done"><b>v2.0.0a</b> —— 全自研架构首发：Self-DiT / 因果 3D VAE / ByteTextEncoder；Rectified Flow 训练管线；28 步 EDCISampler 高质量推理；30 秒稳定视频输出；官网棱镜组件。</li>
+      <li class="done"><b>v2.0.0a</b> —— 全自研架构首发：Self-DiT / SelfVAE（对称3D VAE）/ ByteTextEncoder；Rectified Flow 训练管线；28 步 EDCISampler 高质量推理；30 秒稳定视频输出；官网棱镜组件。</li>
       <li><b>v2.0.1</b> —— 引入 LoRA 微调接口，方便在小数据集上适配特定风格。</li>
       <li><b>v2.1</b> —— 8K 超分辨率 Upscaler 模块，对已生成视频做后期清晰化。</li>
       <li><b>v2.2</b> —— 口型同步插件，结合音频自动驱动人物嘴型。</li>
